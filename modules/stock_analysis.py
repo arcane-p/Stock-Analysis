@@ -1,62 +1,83 @@
 import numpy as np
 import pandas as pd
 import yfinance as yf
-from datetime import date, timedelta
+from datetime import date
 import matplotlib.pyplot as plt
-import matplotlib as mpl
 
 import api_key  # imports API Keys
 
+
 class Stock():
 
-    def __init__(self, ticker: str):
+    def __init__(self, ticker: str, window: int = 84):
         self.ticker = ticker
-        # grab stock data
 
-        # time_start = today minus 84 minus weekends to get 85 rows. 85 = 70 + 14 + 1
-        time_start = (date.today() - pd.tseries.offsets.BusinessDay(200)).strftime("%Y-%m-%d")
+        # Load stock data
+        time_start = (date.today() - pd.tseries.offsets.BusinessDay(window)).strftime("%Y-%m-%d")
         time_end = date.today().strftime("%Y-%m-%d")
-
         self.stock_data = yf.Ticker(self.ticker).history(start=time_start, end=time_end).drop(columns=["Open", "High", "Low", "Volume", "Dividends", "Stock Splits"], errors="ignore")
+        self.stock_data.dropna(axis=0, inplace=True)  # remove any null rows 
 
+    def moving_average_cross_analysis(self, short_window: int = 26, long_window: int = 70, moving_avg: list = ["EMA", "SMA"]):
+        """Generate signals and return timeframe with position.
 
-    def moving_average_analysis(self):
-        self.moving_average_table = self.stock_data.copy()
-        self.moving_average_table["26 Day"] = self.stock_data["Close"].ewm(span=26).mean()
-        self.moving_average_table["70 Day"] = self.stock_data["Close"].rolling(window=70).mean()
-        # At this point we only really care about the most recent 14 days, since rolling is done
-        self.moving_average_table["diff"] = abs(self.moving_average_table["26 Day"] - self.moving_average_table["70 Day"])
-        # TEST
-        self.moving_average_table["Signal"] = 0
-        self.moving_average_table["Signal"] = np.where(self.moving_average_table["26 Day"] > self.moving_average_table["70 Day"], 1, 0)
-        self.moving_average_table["Position"] = self.moving_average_table["Signal"].diff()
+        Uses a variable short & long window, with interchangable moving_average styles.
 
-        results = self.moving_average_table.loc[self.moving_average_table["diff"] < 0.2]
+        Args:
+            short_window (int, optional): Window of days to use for short-term MA. Defaults to 26.
+            long_window (int, optional): Window of days to use for long-term MA. Defaults to 70.
+            moving_avg (list, optional): Defines type of moving average for short and long window respectively. Defaults to ["EMA", "SMA"].
 
-        # returns timestamps
-        print(self.moving_average_table)
-        return results.index.tolist()
+        Returns:
+            [type]: [description]
+        """
+        self.df_MA = self.stock_data.copy()
+        if len(moving_avg) > 2 or ("EMA" not in moving_avg and "SMA" not in moving_avg):
+            raise Exception("moving_avg invalid. Must be list containing either SMA or EMA respectively.")
 
-    def display(self):
-        plt.plot(self.moving_average_table["Close"], label="Price")
-        plt.plot(self.moving_average_table["26 Day"], label="26 Day EMA")
-        plt.plot(self.moving_average_table["70 Day"], label="70 Day SMA")
+        # Begin analysis
+        if moving_avg[0] == "EMA":
+            self.df_MA["short_window_col"] = self.stock_data["Close"].ewm(span=short_window, adjust=False).mean()
+        elif moving_avg[0] == "SMA":
+            self.df_MA["short_window_col"] = self.stock_data["Close"].rolling(span=short_window, min_periods=1).mean()
 
-        plt.plot(self.moving_average_table[self.moving_average_table["Position"] == 1].index,
-                 self.moving_average_table["26 Day"][self.moving_average_table["Position"] == 1],
-                 "^", color="g", label='buy')
+        if moving_avg[1] == "SMA":
+            self.df_MA["long_window_col"] = self.stock_data["Close"].rolling(window=long_window, min_periods=1).mean()
+        elif moving_avg[1] == "EMA":
+            self.df_MA["long_window_col"] = self.stock_data["Close"].emw(window=long_window, adjust=False).mean()
 
-        plt.plot(self.moving_average_table[self.moving_average_table["Position"] == -1].index,
-                 self.moving_average_table["26 Day"][self.moving_average_table["Position"] == -1],
-                 "v", color="r", label='sell')
+        # Generates Signals and derives trading positions
+        self.df_MA["Signal"] = 0
+        self.df_MA["Signal"] = np.where(self.df_MA["short_window_col"] > self.df_MA["long_window_col"], 1, 0)
+        self.df_MA["Position"] = self.df_MA["Signal"].diff()
 
-        plt.xlabel("Date")
-        plt.ylabel("Price")
-        plt.legend()
-        plt.show()
+        results = self.df_MA.loc[self.df_MA["Position"] != 0]
+        # final_dict = {}
+        # for timestamp in results.index.tolist():
+        #     final_dict[timestamp] = results.at[timestamp, "Position"]
 
+        final_dict = {timestamp: results.at[timestamp, "Position"] for timestamp in results.index.tolist() if ~np.isnan(results.at[timestamp, "Position"])}
 
+        return final_dict
 
+    def display(self, analysis_type: str):
+        if analysis_type == "MA":
+            plt.plot(self.df_MA["Close"], label="Price")
+            plt.plot(self.df_MA["short_window_col"], label="short_window_col")
+            plt.plot(self.df_MA["long_window_col"], label="long_window_col")
+
+            plt.plot(self.df_MA[self.df_MA["Position"] == 1].index,
+                     self.df_MA["short_window_col"][self.df_MA["Position"] == 1],
+                     "^", color="g", label='buy')
+
+            plt.plot(self.df_MA[self.df_MA["Position"] == -1].index,
+                     self.df_MA["short_window_col"][self.df_MA["Position"] == -1],
+                     "v", color="r", label='sell')
+
+            plt.xlabel("Date")
+            plt.ylabel("Price")
+            plt.legend()
+            plt.show()
 
     def buy_stock(self):
         # import alpaca_trade_api as tradeapi
@@ -72,14 +93,9 @@ class Stock():
         # )
         pass
 
-# Debug
-s = Stock("MRK")
-timestamps = s.moving_average_analysis()
-print(timestamps)
 
-# while True:
-#     inputed = input("See graph?: ").upper()[0]
-#     if inputed == "Y":
-s.display()
-#     else:
-#         break
+# Debug
+# s = Stock("MRK", 84)
+# timestamps = s.moving_average_cross_analysis(26, 70, ["EMA", "SMA"])
+# print(timestamps)
+# s.display("MA")
