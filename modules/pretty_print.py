@@ -1,9 +1,9 @@
 import logging
 
 
-class Print_Log():
+class PL():
 
-    def __init__(self, print_level: int, log_filename="logfile"):
+    def __init__(self, print_level: int = 2, log_filename: str = "logfile"):
         # Debug - 0 - Detailed information, typically of interest only when diagnosing problems.
         # Info - 1 - Confirmation that things are working as expected.
         # WARNING - 2 - An indication that something unexpected happened, or indicative of some problem in the near future (e.g. ‘disk space low’). The software is still working as expected.
@@ -24,7 +24,13 @@ class Print_Log():
         if int(self.print_level) > 4 or int(self.print_level) < 0:
             return False
 
-    def print(self, message, significance):
+    def print(self, message: str, significance: int):
+        """[summary]
+
+        Args:
+            message (str): [description]
+            significance (int): 0 - Debug, 1 - Info, 2 - Warn, 3 - Error, 4 - Fatal
+        """
         self.message = message
 
         if significance == 0:
